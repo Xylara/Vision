@@ -1,7 +1,6 @@
 import {
   SlashCommandBuilder,
   AttachmentBuilder,
-  EmbedBuilder,
   MessageFlags,
   InteractionContextType,
 } from 'discord.js';
@@ -16,7 +15,7 @@ const cooldowns = new Map();
 
 export const data = new SlashCommandBuilder()
   .setName('gif')
-  .setDescription('Turn an image into an animated GIF and host it on object storage')
+  .setDescription('Turn an image into a GIF and host it on object storage')
   .setContexts(
     InteractionContextType.Guild,
     InteractionContextType.BotDM,
@@ -34,14 +33,6 @@ export const data = new SlashCommandBuilder()
       .setDescription('Output width in pixels (default from server config)')
       .setMinValue(128)
       .setMaxValue(640)
-      .setRequired(false),
-  )
-  .addIntegerOption((option) =>
-    option
-      .setName('frames')
-      .setDescription('Number of animation frames, more = smoother but bigger')
-      .setMinValue(4)
-      .setMaxValue(48)
       .setRequired(false),
   )
   .addBooleanOption((option) =>
@@ -87,7 +78,6 @@ export async function execute(interaction) {
   validateAttachment(attachment);
 
   const width = interaction.options.getInteger('size') ?? config.gif.maxWidth;
-  const frames = interaction.options.getInteger('frames') ?? config.gif.frames;
   const startedAt = Date.now();
 
   const input = await downloadAttachment(attachment, { maxBytes: config.limits.maxInputBytes });
@@ -95,7 +85,6 @@ export async function execute(interaction) {
 
   const gif = await imageToGifWithinLimit(input, {
     width,
-    frames,
     maxBytes: config.limits.maxOutputBytes,
   });
 
@@ -108,34 +97,13 @@ export async function execute(interaction) {
   });
 
   const fileName = upload.key.split('/').pop();
-  const attachmentMode = config.limits.replyWithAttachment;
-  const sendAsFile = attachmentMode === 'always' || (attachmentMode === 'auto' && !upload.isPublic);
-  const link = upload.isPublic ? 'Direct link (permanent)' : 'Temporary link (signed)';
-  const requester = interaction.user.globalName ?? interaction.user.username ?? 'someone';
 
-  const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
-    .setTitle('Your GIF is ready')
-    .setDescription(`[${link}](${upload.url})`)
-    .addFields(
-      { name: 'Dimensions', value: `${gif.width}×${gif.height}`, inline: true },
-      { name: 'Frames', value: `${gif.frames}`, inline: true },
-      { name: 'Size', value: formatBytes(upload.size), inline: true },
-      { name: 'Storage', value: `${upload.provider} · \`${upload.key}\``, inline: false },
-    )
-    .setFooter({ text: `Requested by ${requester}` })
-    .setTimestamp();
-
-  const payload = { embeds: [embed] };
-
-  if (sendAsFile) {
-    embed.setImage(`attachment://${fileName}`);
-    payload.files = [new AttachmentBuilder(gif.buffer, { name: fileName, description: 'Animated GIF' })];
-  } else {
-    embed.setImage(upload.url);
-  }
-
-  await interaction.editReply(payload);
+  // Reply with the image only: no link, no embed, no extra text.
+  await interaction.editReply({
+    content: null,
+    embeds: [],
+    files: [new AttachmentBuilder(gif.buffer, { name: fileName, description: 'GIF' })],
+  });
   logger.info(`/gif done in ${Date.now() - startedAt}ms -> ${upload.url}`);
 }
 

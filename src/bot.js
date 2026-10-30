@@ -13,7 +13,11 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.once(Events.ClientReady, async (readyClient) => {
   logger.info(`logged in as ${readyClient.user.tag} (${readyClient.user.id})`);
   logger.info(`storage: ${describeStorage()}`);
-  logger.info(`gif defaults: ${config.gif.maxWidth}px, ${config.gif.frames} frames, ${config.gif.frameDelayMs}ms/frame`);
+  logger.info(
+    config.gif.zoom > 0
+      ? `gif defaults: ${config.gif.maxWidth}px, ${config.gif.frames} frames, ${config.gif.frameDelayMs}ms/frame`
+      : `gif defaults: ${config.gif.maxWidth}px, still image (zoom disabled)`,
+  );
 
   readyClient.user.setPresence({
     status: 'online',

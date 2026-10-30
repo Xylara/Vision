@@ -54,53 +54,24 @@ async function normalize(input, { maxWidth, background }) {
   return { png: data, width: info.width, height: info.height };
 }
 
-function zoomScale(index, frameCount, zoom) {
-  const phase = (2 * Math.PI * index) / frameCount;
-  return 1 + zoom * (0.5 - 0.5 * Math.cos(phase));
-}
-
-async function renderFrame(png, width, height, scale) {
-  const scaledWidth = Math.max(width, Math.round(width * scale));
-  const scaledHeight = Math.max(height, Math.round(height * scale));
-
-  const { data } = await sharp(png)
-    .resize(scaledWidth, scaledHeight, { fit: 'fill', kernel: 'lanczos3' })
-    .extract({
-      left: Math.floor((scaledWidth - width) / 2),
-      top: Math.floor((scaledHeight - height) / 2),
-      width,
-      height,
-    })
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
+async function renderRaw(png) {
+  const { data } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   return data;
 }
 
-function encodeFrames(frames, width, height, delayMs) {
+function encodeStill(rgba, width, height) {
   const encoder = GIFEncoder();
-  const palette = quantize(frames[0], 256, { format: 'rgb565' });
+  const palette = quantize(rgba, 256, { format: 'rgb565' });
+  const indexed = applyPalette(rgba, palette, 'rgb565');
 
-  frames.forEach((rgba, index) => {
-    const indexed = applyPalette(rgba, palette, 'rgb565');
-    encoder.writeFrame(indexed, width, height, {
-      palette,
-      delay: delayMs,
-      repeat: index === 0 ? 0 : undefined,
-      dispose: 1,
-    });
-  });
-
+  encoder.writeFrame(indexed, width, height, { palette });
   encoder.finish();
+
   return Buffer.from(encoder.bytes());
 }
 
 export async function imageToGif(input, options = {}) {
   const width = options.width ?? config.gif.maxWidth;
-  const frameCount = options.frames ?? config.gif.frames;
-  const delayMs = options.delayMs ?? config.gif.frameDelayMs;
-  const zoom = options.zoom ?? config.gif.zoom;
   const background = options.background ?? config.gif.background;
 
   let normalized;
@@ -114,40 +85,31 @@ export async function imageToGif(input, options = {}) {
   }
 
   const { png, width: w, height: h } = normalized;
-  const frames = [];
+  const rgba = await renderRaw(png);
+  const buffer = encodeStill(rgba, w, h);
 
-  for (let index = 0; index < frameCount; index += 1) {
-    const scale = zoomScale(index, frameCount, zoom);
-    frames.push(await renderFrame(png, w, h, scale));
-  }
-
-  const buffer = encodeFrames(frames, w, h, delayMs);
-
-  return { buffer, width: w, height: h, frames: frameCount, delayMs };
+  return { buffer, width: w, height: h, frames: 1 };
 }
 
 export async function imageToGifWithinLimit(input, options = {}) {
   const maxBytes = options.maxBytes ?? config.limits.maxOutputBytes;
+  const baseWidth = options.width ?? config.gif.maxWidth;
   const attempts = [
     {},
-    { width: Math.round((options.width ?? config.gif.maxWidth) * 0.75) },
-    { width: Math.round((options.width ?? config.gif.maxWidth) * 0.5), frames: 12 },
+    { width: Math.round(baseWidth * 0.75) },
+    { width: Math.round(baseWidth * 0.5) },
+    { width: Math.round(baseWidth * 0.35) },
   ];
 
-  let result;
   for (const overrides of attempts) {
-    result = await imageToGif(input, { ...options, ...overrides });
+    const result = await imageToGif(input, { ...options, ...overrides });
     if (result.buffer.length <= maxBytes) return result;
     logger.debug(
       `gif is ${(result.buffer.length / 1024 / 1024).toFixed(2)}MB, retrying smaller`,
     );
   }
 
-  result = await imageToGif(input, { ...options, frames: 1, zoom: 0 });
-  if (result.buffer.length > maxBytes) {
-    throw new UserError('That image produces a GIF that is too large. Try a smaller or simpler image.');
-  }
-  return result;
+  throw new UserError('That image produces a GIF that is too large. Try a smaller or simpler image.');
 }
 
 export default imageToGif;
